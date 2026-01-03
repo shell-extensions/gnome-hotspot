@@ -1,0 +1,28 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: hotspot-toggle\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Hotspot"
+msgstr "Punto de acceso"
+
+msgid "hotspot-toggle Kommando nicht gefunden."
+msgstr "No se encontró el comando hotspot-toggle."
+
+msgid "Schalten fehlgeschlagen"
+msgstr "Error al alternar"
+
+msgid "Hotspot deaktiviert"
+msgstr "Punto de acceso desactivado"
+
+msgid "Kein WLAN-Interface für Hotspot gefunden"
+msgstr "No se encontró una interfaz Wi-Fi para el punto de acceso."
+
+msgid "Hotspot aktiviert"
+msgstr "Punto de acceso activado"
+
+msgid "Hotspot aktiviert (Warnung)"
+msgstr "Punto de acceso activado (advertencia)"

@@ -133,6 +133,21 @@ class HotspotIndicator extends QuickSettings.SystemIndicator {
         return stdout.split('\n').some(line => line.startsWith(`${HOTSPOT_NAME}:`));
     }
 
+    async _getHotspotSsid() {
+        try {
+            const result = await runCommand([
+                'nmcli', '-t', '-g', '802-11-wireless.ssid',
+                'connection', 'show', HOTSPOT_NAME,
+            ]);
+
+            const ssid = (result?.stdout ?? '').trim();
+            return ssid || HOTSPOT_NAME;
+        } catch (e) {
+            log(`hotspot-toggle: SSID lookup failed: ${e}`);
+            return HOTSPOT_NAME;
+        }
+    }
+
     async _refresh() {
         if (this._updateRunning)
             return;
@@ -141,9 +156,16 @@ class HotspotIndicator extends QuickSettings.SystemIndicator {
         try {
             const active = await this._isActive();
             this._toggle.checked = active;
+            if (active) {
+                const ssid = await this._getHotspotSsid();
+                this._toggle.subtitle = ssid;
+            } else {
+                this._toggle.subtitle = '';
+            }
         } catch (e) {
             log(`hotspot-toggle: status check failed: ${e}`);
             this._toggle.checked = false;
+            this._toggle.subtitle = '';
         } finally {
             this._updateRunning = false;
         }

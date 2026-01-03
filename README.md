@@ -1,5 +1,10 @@
 # GNOME Hotspot Toggle
 
+[![GNOME Shell](https://img.shields.io/badge/GNOME%20Shell-46%2F47%2F48-4A86CF?logo=gnome&logoColor=white)](https://www.gnome.org/)
+[![License: GPL-2.0](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](LICENSE)
+
+**English** | [Deutsch](README.de.md) | [Español](README.es.md)
+
 A small GNOME Shell extension and companion script to toggle a NetworkManager
 Wi-Fi hotspot and set up basic NAT/iptables rules.
 

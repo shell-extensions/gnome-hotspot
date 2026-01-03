@@ -7,8 +7,37 @@ PREFERRED_WIFI_IF="${HOTSPOT_WIFI_IF:-}"
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 IP_FORWARD_STATE_FILE="${RUNTIME_DIR}/hotspot-toggle.ip_forward"
 NAT_STATE_FILE="${RUNTIME_DIR}/hotspot-toggle.nat"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "${RUNTIME_DIR}" 2>/dev/null || true
+
+LOCALE_DIR=""
+for candidate in \
+  "${SCRIPT_DIR}/locale" \
+  "${SCRIPT_DIR}/gnome-shell-extension/hotspot@yurij.de/locale" \
+  "${HOME}/.local/share/gnome-shell/extensions/hotspot@yurij.de/locale"; do
+  if [[ -d "${candidate}" ]]; then
+    LOCALE_DIR="${candidate}"
+    break
+  fi
+done
+
+HAS_GETTEXT=0
+if command -v gettext >/dev/null 2>&1 && [[ -n "${LOCALE_DIR}" ]]; then
+  export TEXTDOMAIN="hotspot-toggle"
+  export TEXTDOMAINDIR="${LOCALE_DIR}"
+  HAS_GETTEXT=1
+fi
+
+translate() {
+  local msg=$1
+
+  if ((HAS_GETTEXT)); then
+    gettext "${msg}"
+  else
+    echo "${msg}"
+  fi
+}
 
 log() {
   logger -t hotspot-toggle "$1"
@@ -204,7 +233,7 @@ if is_active; then
 
   nmcli connection down "${HOTSPOT_NAME}"
   nmcli radio wifi off
-  notify-send "Hotspot deaktiviert"
+  notify-send "$(translate "Hotspot deaktiviert")"
 else
   # Falls Verbindung noch nicht existiert, versuch sie zu erstellen:
   nmcli radio wifi on
@@ -212,7 +241,7 @@ else
     nmcli dev wifi hotspot 
 
   if ! wifi_if=$(find_wifi_interface); then
-    notify-send "Kein WLAN-Interface für Hotspot gefunden"
+    notify-send "$(translate "Kein WLAN-Interface für Hotspot gefunden")"
     exit 1
   fi
   log "Nutze WiFi-Interface ${wifi_if} für Hotspot-Firewall"
@@ -224,8 +253,8 @@ else
   ensure_nat_and_forwarding "${wifi_if}" || nat_status=1
 
   if ((fw_status==0 && nat_status==0)); then
-    notify-send "Hotspot aktiviert"
+    notify-send "$(translate "Hotspot aktiviert")"
   else
-    notify-send "Hotspot aktiviert (Firewall/NAT-Warnung!)" "Bitte Regeln prüfen oder iptables-Sudoers anpassen"
+    notify-send "$(translate "Hotspot aktiviert (Warnung)")"
   fi
 fi
