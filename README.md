@@ -8,6 +8,10 @@
 A small GNOME Shell extension and companion script to toggle a NetworkManager
 Wi-Fi hotspot and set up basic NAT/iptables rules.
 
+## Screenshots
+![Hotspot on](image/Screenshot%20on.png)
+![Hotspot off](image/Screenshot%20off.png)
+
 ## Features
 - Quick Settings toggle for GNOME Shell 46/47/48.
 - CLI script for manual use or automation.

@@ -8,6 +8,10 @@
 Una pequeña extensión de GNOME Shell y un script compañero para alternar un
 hotspot Wi-Fi de NetworkManager y configurar reglas básicas de NAT/iptables.
 
+## Capturas de pantalla
+![Hotspot activado](image/Screenshot%20on.png)
+![Hotspot desactivado](image/Screenshot%20off.png)
+
 ## Características
 - Toggle de Ajustes Rápidos para GNOME Shell 46/47/48.
 - Script CLI para uso manual o automatización.

@@ -9,6 +9,10 @@ Eine kleine GNOME Shell Erweiterung und ein Begleitskript, um einen
 NetworkManager Wi-Fi Hotspot umzuschalten und grundlegende NAT/iptables
 Regeln zu setzen.
 
+## Screenshots
+![Hotspot an](image/Screenshot%20on.png)
+![Hotspot aus](image/Screenshot%20off.png)
+
 ## Funktionen
 - Quick Settings Schalter für GNOME Shell 46/47/48.
 - CLI Skript für manuelle Nutzung oder Automatisierung.
