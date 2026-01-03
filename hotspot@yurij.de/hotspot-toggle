@@ -100,6 +100,20 @@ sudo_needs_auth() {
   return 1
 }
 
+sudo_nopasswd_available() {
+  if [[ -z "${SUDO_BIN}" || -z "${IPTABLES_BIN}" || ! -x "${IPTABLES_BIN}" ]]; then
+    return 1
+  fi
+
+  local output
+  output=$("${SUDO_BIN}" -n "${IPTABLES_BIN}" -C FORWARD -i lo -j ACCEPT 2>&1 || true)
+  if sudo_needs_auth "${output}"; then
+    return 1
+  fi
+
+  return 0
+}
+
 run_privileged() {
   local output rc
 
@@ -171,8 +185,8 @@ run_privileged_script() {
 }
 
 privileged_enable() {
-  local wifi_if=$1
-  local uplink_if=$2
+  local wifi_if=${1:-}
+  local uplink_if=${2:-}
   local status=0
 
   if [[ -n "${wifi_if}" ]]; then
@@ -188,7 +202,7 @@ privileged_enable() {
 }
 
 privileged_disable() {
-  local wifi_if=$1
+  local wifi_if=${1:-}
 
   if [[ -n "${wifi_if}" ]]; then
     clear_firewall_rules "${wifi_if}"
@@ -271,20 +285,15 @@ ensure_firewall_open() {
   local status=0
 
   # Docker-Kette: akzeptiere Verkehr vom Hotspot-Interface
-  if run_privileged "${IPTABLES_BIN}" -n -L DOCKER-USER >/dev/null 2>&1; then
-    if ! run_privileged "${IPTABLES_BIN}" -C DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
-      if run_privileged "${IPTABLES_BIN}" -I DOCKER-USER -i "${wifi_if}" -j ACCEPT; then
-        log "Firewall-Regel in DOCKER-USER hinzugefügt (${wifi_if})"
-      else
-        log "WARNUNG: DOCKER-USER-Regel konnte nicht gesetzt werden"
-        status=1
-      fi
-    else
-      log "Firewall-Regel in DOCKER-USER bereits vorhanden (${wifi_if})"
-    fi
+  if run_privileged "${IPTABLES_BIN}" -C DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+    log "Firewall-Regel in DOCKER-USER bereits vorhanden (${wifi_if})"
   else
-    log "DOCKER-USER Chain nicht gefunden, Docker-Freigabe übersprungen"
-    status=1
+    if run_privileged "${IPTABLES_BIN}" -I DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+      log "Firewall-Regel in DOCKER-USER hinzugefügt (${wifi_if})"
+    else
+      log "DOCKER-USER Chain nicht gefunden, Docker-Freigabe übersprungen"
+      status=1
+    fi
   fi
 
   # FORWARD-Kette: Verkehr vom Hotspot ins Netz erlauben
@@ -392,15 +401,30 @@ if [[ "${MODE}" == "disable" ]]; then
   exit $?
 fi
 
+use_inline_privileged=0
+if [[ "${EUID}" -eq 0 ]]; then
+  use_inline_privileged=1
+elif sudo_nopasswd_available; then
+  PRIV_MODE="sudo"
+  use_inline_privileged=1
+fi
+
 if is_active; then
   priv_args=(--privileged-disable --runtime-dir "${RUNTIME_DIR}")
+  wifi_if=""
   if wifi_if=$(find_wifi_interface); then
     priv_args+=(--wifi-if "${wifi_if}")
   else
     log "Hotspot-Interface nicht gefunden, überspringe Firewall-Cleanup"
   fi
-  if ! run_privileged_script "${priv_args[@]}"; then
-    log "WARNUNG: Privilegierte Deaktivierung fehlgeschlagen"
+  if ((use_inline_privileged)); then
+    if ! privileged_disable "${wifi_if}"; then
+      log "WARNUNG: Privilegierte Deaktivierung fehlgeschlagen"
+    fi
+  else
+    if ! run_privileged_script "${priv_args[@]}"; then
+      log "WARNUNG: Privilegierte Deaktivierung fehlgeschlagen"
+    fi
   fi
 
   nmcli connection down "${HOTSPOT_NAME}"
@@ -420,10 +444,18 @@ else
 
   fw_status=0
   nat_status=0
-  if ! run_privileged_script --privileged-enable --wifi-if "${wifi_if}" --runtime-dir "${RUNTIME_DIR}"; then
-    log "WARNUNG: Privilegierte Aktivierung fehlgeschlagen"
-    fw_status=1
-    nat_status=1
+  if ((use_inline_privileged)); then
+    if ! privileged_enable "${wifi_if}"; then
+      log "WARNUNG: Privilegierte Aktivierung fehlgeschlagen"
+      fw_status=1
+      nat_status=1
+    fi
+  else
+    if ! run_privileged_script --privileged-enable --wifi-if "${wifi_if}" --runtime-dir "${RUNTIME_DIR}"; then
+      log "WARNUNG: Privilegierte Aktivierung fehlgeschlagen"
+      fw_status=1
+      nat_status=1
+    fi
   fi
 
   if ((fw_status==0 && nat_status==0)); then

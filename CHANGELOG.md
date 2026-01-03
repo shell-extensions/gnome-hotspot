@@ -7,6 +7,11 @@ Semantic Versioning.
 ## [Unreleased]
 - TBD
 
+## [0.3.2]
+- Prefer sudoers NOPASSWD path to avoid pkexec prompts.
+- Fix unbound variable error when privileged enable/disable runs inline.
+- Use allowed iptables checks for DOCKER-USER rule detection.
+
 ## [0.3.1]
 - Switch metadata description to English and document privileged setup options.
 
