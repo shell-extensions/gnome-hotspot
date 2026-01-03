@@ -7,6 +7,9 @@ Semantic Versioning.
 ## [Unreleased]
 - TBD
 
+## [0.3.1]
+- Switch metadata description to English and document privileged setup options.
+
 ## [0.3.0]
 - Add pkexec fallback with a single privilege prompt per toggle.
 - Move extension files to the repository root for packaging.
