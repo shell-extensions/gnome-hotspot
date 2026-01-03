@@ -1,0 +1,10 @@
+{
+  "uuid": "hotspot@yurij.de",
+  "name": "Hotspot Toggle",
+  "description": "Fügt in den GNOME Quick Settings einen Hotspot-Schalter hinzu und ruft das hotspot-toggle Script auf.",
+  "url": "https://github.com/shell-extensions/gnome-hotspot",
+  "shell-version": ["46", "47", "48"],
+  "version": 1,
+  "version-name": "0.1.0",
+  "gettext-domain": "hotspot-toggle"
+}

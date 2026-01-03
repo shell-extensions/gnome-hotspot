@@ -1,0 +1,29 @@
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build extension zip
+        run: |
+          set -euo pipefail
+          EXT_DIR="gnome-shell-extension/hotspot@yurij.de"
+          cp -f hotspot-toggle "${EXT_DIR}/hotspot-toggle"
+          cp -f LICENSE "${EXT_DIR}/LICENSE"
+          cd gnome-shell-extension
+          zip -r "../hotspot@yurij.de.zip" "hotspot@yurij.de"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hotspot@yurij.de.zip

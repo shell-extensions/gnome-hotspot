@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOTSPOT_NAME="Hotspot"   # so heißt die NM-Verbindung standardmäßig
+# Optional bevorzugtes WiFi-Interface (z.B. via HOTSPOT_WIFI_IF env)
+PREFERRED_WIFI_IF="${HOTSPOT_WIFI_IF:-}"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+IP_FORWARD_STATE_FILE="${RUNTIME_DIR}/hotspot-toggle.ip_forward"
+NAT_STATE_FILE="${RUNTIME_DIR}/hotspot-toggle.nat"
+
+mkdir -p "${RUNTIME_DIR}" 2>/dev/null || true
+
+log() {
+  logger -t hotspot-toggle "$1"
+}
+
+find_wifi_interface() {
+  local ifname=""
+
+  # Erst versuchen, das Interface über die Hotspot-Verbindung zu lesen
+  ifname=$( (nmcli -t -g GENERAL.DEVICES connection show "${HOTSPOT_NAME}" 2>/dev/null | cut -d: -f1) || true )
+
+  # Falls konfiguriert, gewünschtes Interface bevorzugen
+  if [[ -z "${ifname}" && -n "${PREFERRED_WIFI_IF}" ]]; then
+    if nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: -v d="${PREFERRED_WIFI_IF}" '$1==d && $2=="wifi"{found=1} END{exit found?0:1}'; then
+      ifname="${PREFERRED_WIFI_IF}"
+    else
+      log "Konfiguriertes Interface ${PREFERRED_WIFI_IF} nicht verfügbar/kein WiFi"
+    fi
+  fi
+
+  # Fallback: erstes WiFi-Interface aus der Geräteübersicht
+  if [[ -z "${ifname}" ]]; then
+    ifname=$( (nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}') || true )
+  fi
+
+  if [[ -z "${ifname}" ]]; then
+    log "Kein WLAN-Interface für Hotspot gefunden"
+    return 1
+  fi
+
+  echo "${ifname}"
+}
+
+find_uplink_interface() {
+  ip route show default 0.0.0.0/0 | awk 'NR==1{print $5}'
+}
+
+enable_ip_forward() {
+  local current
+  current=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)
+
+  if [[ "${current}" != "1" ]]; then
+    echo "${current}" > "${IP_FORWARD_STATE_FILE}" 2>/dev/null || true
+    if sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null; then
+      log "ip_forward auf 1 gesetzt"
+    else
+      log "WARNUNG: ip_forward konnte nicht aktiviert werden"
+      return 1
+    fi
+  else
+    log "ip_forward bereits aktiv"
+  fi
+}
+
+restore_ip_forward() {
+  local saved current
+
+  if [[ ! -f "${IP_FORWARD_STATE_FILE}" ]]; then
+    return 0
+  fi
+
+  saved=$(cat "${IP_FORWARD_STATE_FILE}" 2>/dev/null || echo "")
+  rm -f "${IP_FORWARD_STATE_FILE}"
+
+  current=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo "")
+  if [[ -n "${saved}" && "${saved}" != "${current}" ]]; then
+    sudo sysctl -w net.ipv4.ip_forward="${saved}" >/dev/null || \
+      log "WARNUNG: ip_forward konnte nicht zurückgesetzt werden"
+  fi
+}
+
+ensure_firewall_open() {
+  local wifi_if=$1
+  local status=0
+
+  # Docker-Kette: akzeptiere Verkehr vom Hotspot-Interface
+  if sudo /usr/sbin/iptables -n -L DOCKER-USER >/dev/null 2>&1; then
+    if ! sudo /usr/sbin/iptables -C DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+      if sudo /usr/sbin/iptables -I DOCKER-USER -i "${wifi_if}" -j ACCEPT; then
+        log "Firewall-Regel in DOCKER-USER hinzugefügt (${wifi_if})"
+      else
+        log "WARNUNG: DOCKER-USER-Regel konnte nicht gesetzt werden"
+        status=1
+      fi
+    else
+      log "Firewall-Regel in DOCKER-USER bereits vorhanden (${wifi_if})"
+    fi
+  else
+    log "DOCKER-USER Chain nicht gefunden, Docker-Freigabe übersprungen"
+    status=1
+  fi
+
+  # FORWARD-Kette: Verkehr vom Hotspot ins Netz erlauben
+  if ! sudo /usr/sbin/iptables -C FORWARD -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+    if sudo /usr/sbin/iptables -I FORWARD -i "${wifi_if}" -j ACCEPT; then
+      log "FORWARD-Regel für eingehenden Hotspot-Traffic gesetzt (${wifi_if})"
+    else
+      log "WARNUNG: FORWARD-Regel (eingehend) konnte nicht gesetzt werden"
+      status=1
+    fi
+  else
+    log "FORWARD-Regel (eingehend) bereits vorhanden (${wifi_if})"
+  fi
+
+  # Rückrichtung erlauben, damit Antworten durchkommen
+  if ! sudo /usr/sbin/iptables -C FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+    if sudo /usr/sbin/iptables -I FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; then
+      log "FORWARD-Regel für Rückverkehr gesetzt (${wifi_if})"
+    else
+      log "WARNUNG: FORWARD-Regel (Rückverkehr) konnte nicht gesetzt werden"
+      status=1
+    fi
+  else
+    log "FORWARD-Regel (Rückverkehr) bereits vorhanden (${wifi_if})"
+  fi
+
+  return $status
+}
+
+ensure_nat_and_forwarding() {
+  local wifi_if=$1
+  local uplink_if status=0
+
+  uplink_if=$(find_uplink_interface)
+  if [[ -z "${uplink_if}" ]]; then
+    log "WARNUNG: kein Uplink-Interface für NAT gefunden"
+    status=1
+  else
+    log "NAT/FORWARD: ${wifi_if} -> ${uplink_if}"
+    if ! sudo /usr/sbin/iptables -t nat -C POSTROUTING -o "${uplink_if}" -j MASQUERADE 2>/dev/null; then
+      if sudo /usr/sbin/iptables -t nat -A POSTROUTING -o "${uplink_if}" -j MASQUERADE; then
+        echo "${uplink_if}" > "${NAT_STATE_FILE}" 2>/dev/null || true
+        log "NAT-MASQUERADE gesetzt auf ${uplink_if}"
+      else
+        log "WARNUNG: NAT-Regel konnte nicht gesetzt werden (${uplink_if})"
+        status=1
+      fi
+    else
+      log "NAT-MASQUERADE bereits vorhanden (${uplink_if})"
+    fi
+  fi
+
+  enable_ip_forward || status=1
+
+  return $status
+}
+
+clear_firewall_rules() {
+  local wifi_if=$1
+
+  if sudo /usr/sbin/iptables -D DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+    log "Firewall-Regel für Hotspot aus DOCKER-USER entfernt (${wifi_if})"
+  fi
+
+  if sudo /usr/sbin/iptables -D FORWARD -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+    log "FORWARD-Regel für Hotspot entfernt (${wifi_if})"
+  fi
+
+  if sudo /usr/sbin/iptables -D FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+    log "FORWARD-Rückregel für Hotspot entfernt (${wifi_if})"
+  fi
+}
+
+clear_nat_rules() {
+  local uplink_if
+
+  if [[ ! -f "${NAT_STATE_FILE}" ]]; then
+    return 0
+  fi
+
+  uplink_if=$(cat "${NAT_STATE_FILE}" 2>/dev/null || echo "")
+  rm -f "${NAT_STATE_FILE}"
+
+  if [[ -n "${uplink_if}" ]]; then
+    if sudo /usr/sbin/iptables -t nat -D POSTROUTING -o "${uplink_if}" -j MASQUERADE 2>/dev/null; then
+      log "NAT-MASQUERADE entfernt (${uplink_if})"
+    fi
+  fi
+}
+
+is_active() {
+  nmcli -t -f NAME,TYPE,DEVICE connection show --active | grep -q "^${HOTSPOT_NAME}"
+}
+
+if is_active; then
+  if wifi_if=$(find_wifi_interface); then
+    clear_firewall_rules "${wifi_if}"
+  else
+    log "Hotspot-Interface nicht gefunden, überspringe Firewall-Cleanup"
+  fi
+  clear_nat_rules
+  restore_ip_forward
+
+  nmcli connection down "${HOTSPOT_NAME}"
+  nmcli radio wifi off
+  notify-send "Hotspot deaktiviert"
+else
+  # Falls Verbindung noch nicht existiert, versuch sie zu erstellen:
+  nmcli radio wifi on
+  nmcli connection up "${HOTSPOT_NAME}" 2>/dev/null || \
+    nmcli dev wifi hotspot 
+
+  if ! wifi_if=$(find_wifi_interface); then
+    notify-send "Kein WLAN-Interface für Hotspot gefunden"
+    exit 1
+  fi
+  log "Nutze WiFi-Interface ${wifi_if} für Hotspot-Firewall"
+
+  fw_status=0
+  nat_status=0
+
+  ensure_firewall_open "${wifi_if}" || fw_status=1
+  ensure_nat_and_forwarding "${wifi_if}" || nat_status=1
+
+  if ((fw_status==0 && nat_status==0)); then
+    notify-send "Hotspot aktiviert"
+  else
+    notify-send "Hotspot aktiviert (Firewall/NAT-Warnung!)" "Bitte Regeln prüfen oder iptables-Sudoers anpassen"
+  fi
+fi
