@@ -17,7 +17,7 @@ Regeln zu setzen.
 
 ## Repository-Aufbau
 - `hotspot-toggle`: Haupt Bash Skript.
-- `gnome-shell-extension/hotspot@yurij.de/`: Erweiterungsquellen und gebündeltes Skript.
+- `hotspot@yurij.de/`: Erweiterungsquellen und gebündeltes Skript.
 - `hotspot-toggle.desktop`: Desktop-Entry.
 - `install.sh`: Installer und sudoers Setup.
 

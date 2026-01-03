@@ -7,6 +7,11 @@ Semantic Versioning.
 ## [Unreleased]
 - TBD
 
+## [0.3.0]
+- Add pkexec fallback with a single privilege prompt per toggle.
+- Move extension files to the repository root for packaging.
+- Update release workflow and install paths for the new layout.
+
 ## [0.2.0]
 - Show the hotspot SSID in the Quick Settings toggle subtitle when active.
 - Add English, German, and Spanish translations for menus and notifications.

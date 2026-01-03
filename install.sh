@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_SRC="${SCRIPT_DIR}/hotspot-toggle"
 DESKTOP_SRC="${SCRIPT_DIR}/hotspot-toggle.desktop"
-EXT_SRC="${SCRIPT_DIR}/gnome-shell-extension/hotspot@yurij.de"
+EXT_SRC="${SCRIPT_DIR}/hotspot@yurij.de"
 EXT_UUID="hotspot@yurij.de"
 
 TARGET_USER="${TARGET_USER:-${SUDO_USER:-$USER}}"
@@ -85,6 +85,9 @@ sync_extension_payload() {
 
   mkdir -p "${EXT_SRC}"
   install -m 755 "${BIN_SRC}" "${EXT_SRC}/hotspot-toggle"
+  if [[ -f "${SCRIPT_DIR}/LICENSE" ]]; then
+    install -m 644 "${SCRIPT_DIR}/LICENSE" "${EXT_SRC}/LICENSE"
+  fi
   log "Extension-Payload aktualisiert (${EXT_SRC}/hotspot-toggle)"
 }
 

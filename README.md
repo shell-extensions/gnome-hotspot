@@ -16,7 +16,7 @@ Wi-Fi hotspot and set up basic NAT/iptables rules.
 
 ## Repository Layout
 - `hotspot-toggle`: main Bash script.
-- `gnome-shell-extension/hotspot@yurij.de/`: extension sources and bundled script.
+- `hotspot@yurij.de/`: extension sources and bundled script.
 - `hotspot-toggle.desktop`: desktop entry.
 - `install.sh`: installer and sudoers setup.
 

@@ -17,11 +17,11 @@ jobs:
       - name: Build extension zip
         run: |
           set -euo pipefail
-          EXT_DIR="gnome-shell-extension/hotspot@yurij.de"
+          EXT_DIR="hotspot@yurij.de"
           cp -f hotspot-toggle "${EXT_DIR}/hotspot-toggle"
           cp -f LICENSE "${EXT_DIR}/LICENSE"
-          cd gnome-shell-extension
-          zip -r "../hotspot@yurij.de.zip" "hotspot@yurij.de"
+          cd "${EXT_DIR}"
+          zip -r "../hotspot@yurij.de.zip" .
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2

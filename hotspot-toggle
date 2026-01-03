@@ -4,17 +4,64 @@ set -euo pipefail
 HOTSPOT_NAME="Hotspot"   # so heißt die NM-Verbindung standardmäßig
 # Optional bevorzugtes WiFi-Interface (z.B. via HOTSPOT_WIFI_IF env)
 PREFERRED_WIFI_IF="${HOTSPOT_WIFI_IF:-}"
-RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${SCRIPT_DIR}/hotspot-toggle"
+MODE=""
+PRIV_WIFI_IF=""
+PRIV_UPLINK_IF=""
+PRIV_RUNTIME_DIR=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --privileged-enable)
+      MODE="enable"
+      shift
+      ;;
+    --privileged-disable)
+      MODE="disable"
+      shift
+      ;;
+    --wifi-if)
+      PRIV_WIFI_IF="${2:-}"
+      shift 2
+      ;;
+    --uplink-if)
+      PRIV_UPLINK_IF="${2:-}"
+      shift 2
+      ;;
+    --runtime-dir)
+      PRIV_RUNTIME_DIR="${2:-}"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+RUNTIME_DIR="${PRIV_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
 IP_FORWARD_STATE_FILE="${RUNTIME_DIR}/hotspot-toggle.ip_forward"
 NAT_STATE_FILE="${RUNTIME_DIR}/hotspot-toggle.nat"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IPTABLES_BIN="$(command -v iptables || true)"
+SYSCTL_BIN="$(command -v sysctl || true)"
+SUDO_BIN="$(command -v sudo || true)"
+PKEXEC_BIN="$(command -v pkexec || true)"
+PRIV_MODE=""
+
+if [[ -z "${IPTABLES_BIN}" ]]; then
+  IPTABLES_BIN="/usr/sbin/iptables"
+fi
+
+if [[ -z "${SYSCTL_BIN}" ]]; then
+  SYSCTL_BIN="/usr/sbin/sysctl"
+fi
 
 mkdir -p "${RUNTIME_DIR}" 2>/dev/null || true
 
 LOCALE_DIR=""
 for candidate in \
   "${SCRIPT_DIR}/locale" \
-  "${SCRIPT_DIR}/gnome-shell-extension/hotspot@yurij.de/locale" \
+  "${SCRIPT_DIR}/hotspot@yurij.de/locale" \
   "${HOME}/.local/share/gnome-shell/extensions/hotspot@yurij.de/locale"; do
   if [[ -d "${candidate}" ]]; then
     LOCALE_DIR="${candidate}"
@@ -41,6 +88,116 @@ translate() {
 
 log() {
   logger -t hotspot-toggle "$1"
+}
+
+sudo_needs_auth() {
+  local output=$1
+
+  if [[ "${output}" == sudo:* || "${output}" == *$'\nsudo:'* ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+run_privileged() {
+  local output rc
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  if [[ "${PRIV_MODE}" == "sudo" && -n "${SUDO_BIN}" ]]; then
+    "${SUDO_BIN}" -n "$@"
+    return $?
+  fi
+
+  if [[ "${PRIV_MODE}" == "pkexec" && -n "${PKEXEC_BIN}" ]]; then
+    "${PKEXEC_BIN}" "$@"
+    return $?
+  fi
+
+  if [[ -n "${SUDO_BIN}" ]]; then
+    if output=$("${SUDO_BIN}" -n "$@" 2>&1); then
+      PRIV_MODE="sudo"
+      return 0
+    fi
+    rc=$?
+    if sudo_needs_auth "${output}"; then
+      if [[ -n "${PKEXEC_BIN}" ]]; then
+        if "${PKEXEC_BIN}" "$@"; then
+          PRIV_MODE="pkexec"
+          return 0
+        fi
+        return $?
+      fi
+      if [[ -t 0 || -t 1 ]]; then
+        "${SUDO_BIN}" "$@"
+        return $?
+      fi
+      if [[ -n "${output}" ]]; then
+        echo "${output}" >&2
+      fi
+      log "sudo benötigt Passwort, pkexec nicht verfügbar"
+      return "${rc}"
+    fi
+
+    if [[ -n "${output}" ]]; then
+      echo "${output}" >&2
+    fi
+    return "${rc}"
+  fi
+
+  if [[ -n "${PKEXEC_BIN}" ]]; then
+    if "${PKEXEC_BIN}" "$@"; then
+      PRIV_MODE="pkexec"
+      return 0
+    fi
+    return $?
+  fi
+
+  log "Fehlende Berechtigungen: sudo/pkexec nicht verfügbar"
+  return 1
+}
+
+run_privileged_script() {
+  if [[ ! -x "${SCRIPT_PATH}" ]]; then
+    log "Hotspot-Script nicht ausführbar: ${SCRIPT_PATH}"
+    return 1
+  fi
+
+  run_privileged "${SCRIPT_PATH}" "$@"
+}
+
+privileged_enable() {
+  local wifi_if=$1
+  local uplink_if=$2
+  local status=0
+
+  if [[ -n "${wifi_if}" ]]; then
+    ensure_firewall_open "${wifi_if}" || status=1
+  else
+    log "WARNUNG: Hotspot-Interface fehlt, Firewall-Regeln übersprungen"
+    status=1
+  fi
+
+  ensure_nat_and_forwarding "${wifi_if}" "${uplink_if}" || status=1
+
+  return $status
+}
+
+privileged_disable() {
+  local wifi_if=$1
+
+  if [[ -n "${wifi_if}" ]]; then
+    clear_firewall_rules "${wifi_if}"
+  else
+    log "Hotspot-Interface nicht gefunden, überspringe Firewall-Cleanup"
+  fi
+
+  clear_nat_rules
+  restore_ip_forward
 }
 
 find_wifi_interface() {
@@ -81,7 +238,7 @@ enable_ip_forward() {
 
   if [[ "${current}" != "1" ]]; then
     echo "${current}" > "${IP_FORWARD_STATE_FILE}" 2>/dev/null || true
-    if sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null; then
+    if run_privileged "${SYSCTL_BIN}" -w net.ipv4.ip_forward=1 >/dev/null; then
       log "ip_forward auf 1 gesetzt"
     else
       log "WARNUNG: ip_forward konnte nicht aktiviert werden"
@@ -104,7 +261,7 @@ restore_ip_forward() {
 
   current=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo "")
   if [[ -n "${saved}" && "${saved}" != "${current}" ]]; then
-    sudo sysctl -w net.ipv4.ip_forward="${saved}" >/dev/null || \
+    run_privileged "${SYSCTL_BIN}" -w net.ipv4.ip_forward="${saved}" >/dev/null || \
       log "WARNUNG: ip_forward konnte nicht zurückgesetzt werden"
   fi
 }
@@ -114,9 +271,9 @@ ensure_firewall_open() {
   local status=0
 
   # Docker-Kette: akzeptiere Verkehr vom Hotspot-Interface
-  if sudo /usr/sbin/iptables -n -L DOCKER-USER >/dev/null 2>&1; then
-    if ! sudo /usr/sbin/iptables -C DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
-      if sudo /usr/sbin/iptables -I DOCKER-USER -i "${wifi_if}" -j ACCEPT; then
+  if run_privileged "${IPTABLES_BIN}" -n -L DOCKER-USER >/dev/null 2>&1; then
+    if ! run_privileged "${IPTABLES_BIN}" -C DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+      if run_privileged "${IPTABLES_BIN}" -I DOCKER-USER -i "${wifi_if}" -j ACCEPT; then
         log "Firewall-Regel in DOCKER-USER hinzugefügt (${wifi_if})"
       else
         log "WARNUNG: DOCKER-USER-Regel konnte nicht gesetzt werden"
@@ -131,8 +288,8 @@ ensure_firewall_open() {
   fi
 
   # FORWARD-Kette: Verkehr vom Hotspot ins Netz erlauben
-  if ! sudo /usr/sbin/iptables -C FORWARD -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
-    if sudo /usr/sbin/iptables -I FORWARD -i "${wifi_if}" -j ACCEPT; then
+  if ! run_privileged "${IPTABLES_BIN}" -C FORWARD -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+    if run_privileged "${IPTABLES_BIN}" -I FORWARD -i "${wifi_if}" -j ACCEPT; then
       log "FORWARD-Regel für eingehenden Hotspot-Traffic gesetzt (${wifi_if})"
     else
       log "WARNUNG: FORWARD-Regel (eingehend) konnte nicht gesetzt werden"
@@ -143,8 +300,8 @@ ensure_firewall_open() {
   fi
 
   # Rückrichtung erlauben, damit Antworten durchkommen
-  if ! sudo /usr/sbin/iptables -C FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
-    if sudo /usr/sbin/iptables -I FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; then
+  if ! run_privileged "${IPTABLES_BIN}" -C FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+    if run_privileged "${IPTABLES_BIN}" -I FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; then
       log "FORWARD-Regel für Rückverkehr gesetzt (${wifi_if})"
     else
       log "WARNUNG: FORWARD-Regel (Rückverkehr) konnte nicht gesetzt werden"
@@ -159,16 +316,19 @@ ensure_firewall_open() {
 
 ensure_nat_and_forwarding() {
   local wifi_if=$1
-  local uplink_if status=0
+  local uplink_if=${2:-}
+  local status=0
 
-  uplink_if=$(find_uplink_interface)
+  if [[ -z "${uplink_if}" ]]; then
+    uplink_if=$(find_uplink_interface)
+  fi
   if [[ -z "${uplink_if}" ]]; then
     log "WARNUNG: kein Uplink-Interface für NAT gefunden"
     status=1
   else
     log "NAT/FORWARD: ${wifi_if} -> ${uplink_if}"
-    if ! sudo /usr/sbin/iptables -t nat -C POSTROUTING -o "${uplink_if}" -j MASQUERADE 2>/dev/null; then
-      if sudo /usr/sbin/iptables -t nat -A POSTROUTING -o "${uplink_if}" -j MASQUERADE; then
+    if ! run_privileged "${IPTABLES_BIN}" -t nat -C POSTROUTING -o "${uplink_if}" -j MASQUERADE 2>/dev/null; then
+      if run_privileged "${IPTABLES_BIN}" -t nat -A POSTROUTING -o "${uplink_if}" -j MASQUERADE; then
         echo "${uplink_if}" > "${NAT_STATE_FILE}" 2>/dev/null || true
         log "NAT-MASQUERADE gesetzt auf ${uplink_if}"
       else
@@ -188,15 +348,15 @@ ensure_nat_and_forwarding() {
 clear_firewall_rules() {
   local wifi_if=$1
 
-  if sudo /usr/sbin/iptables -D DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+  if run_privileged "${IPTABLES_BIN}" -D DOCKER-USER -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
     log "Firewall-Regel für Hotspot aus DOCKER-USER entfernt (${wifi_if})"
   fi
 
-  if sudo /usr/sbin/iptables -D FORWARD -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
+  if run_privileged "${IPTABLES_BIN}" -D FORWARD -i "${wifi_if}" -j ACCEPT 2>/dev/null; then
     log "FORWARD-Regel für Hotspot entfernt (${wifi_if})"
   fi
 
-  if sudo /usr/sbin/iptables -D FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+  if run_privileged "${IPTABLES_BIN}" -D FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
     log "FORWARD-Rückregel für Hotspot entfernt (${wifi_if})"
   fi
 }
@@ -212,7 +372,7 @@ clear_nat_rules() {
   rm -f "${NAT_STATE_FILE}"
 
   if [[ -n "${uplink_if}" ]]; then
-    if sudo /usr/sbin/iptables -t nat -D POSTROUTING -o "${uplink_if}" -j MASQUERADE 2>/dev/null; then
+    if run_privileged "${IPTABLES_BIN}" -t nat -D POSTROUTING -o "${uplink_if}" -j MASQUERADE 2>/dev/null; then
       log "NAT-MASQUERADE entfernt (${uplink_if})"
     fi
   fi
@@ -222,14 +382,26 @@ is_active() {
   nmcli -t -f NAME,TYPE,DEVICE connection show --active | grep -q "^${HOTSPOT_NAME}"
 }
 
+if [[ "${MODE}" == "enable" ]]; then
+  privileged_enable "${PRIV_WIFI_IF}" "${PRIV_UPLINK_IF}"
+  exit $?
+fi
+
+if [[ "${MODE}" == "disable" ]]; then
+  privileged_disable "${PRIV_WIFI_IF}"
+  exit $?
+fi
+
 if is_active; then
+  priv_args=(--privileged-disable --runtime-dir "${RUNTIME_DIR}")
   if wifi_if=$(find_wifi_interface); then
-    clear_firewall_rules "${wifi_if}"
+    priv_args+=(--wifi-if "${wifi_if}")
   else
     log "Hotspot-Interface nicht gefunden, überspringe Firewall-Cleanup"
   fi
-  clear_nat_rules
-  restore_ip_forward
+  if ! run_privileged_script "${priv_args[@]}"; then
+    log "WARNUNG: Privilegierte Deaktivierung fehlgeschlagen"
+  fi
 
   nmcli connection down "${HOTSPOT_NAME}"
   nmcli radio wifi off
@@ -248,9 +420,11 @@ else
 
   fw_status=0
   nat_status=0
-
-  ensure_firewall_open "${wifi_if}" || fw_status=1
-  ensure_nat_and_forwarding "${wifi_if}" || nat_status=1
+  if ! run_privileged_script --privileged-enable --wifi-if "${wifi_if}" --runtime-dir "${RUNTIME_DIR}"; then
+    log "WARNUNG: Privilegierte Aktivierung fehlgeschlagen"
+    fw_status=1
+    nat_status=1
+  fi
 
   if ((fw_status==0 && nat_status==0)); then
     notify-send "$(translate "Hotspot aktiviert")"

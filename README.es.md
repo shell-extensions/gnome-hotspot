@@ -16,7 +16,7 @@ hotspot Wi-Fi de NetworkManager y configurar reglas básicas de NAT/iptables.
 
 ## Estructura del repositorio
 - `hotspot-toggle`: script principal en Bash.
-- `gnome-shell-extension/hotspot@yurij.de/`: fuentes de la extensión y script integrado.
+- `hotspot@yurij.de/`: fuentes de la extensión y script integrado.
 - `hotspot-toggle.desktop`: entrada de escritorio.
 - `install.sh`: instalador y configuración de sudoers.
 

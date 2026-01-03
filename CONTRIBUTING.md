@@ -6,7 +6,7 @@ focused; please keep changes tight and well-scoped.
 ## Development Setup
 - Run `./install.sh` to install the script, desktop entry, and extension.
 - For local testing without installing, run `./hotspot-toggle` directly.
-- Extension files live in `gnome-shell-extension/hotspot@yurij.de/`.
+- Extension files live in `hotspot@yurij.de/`.
 
 ## Coding Style
 - Bash: 2-space indentation, `set -euo pipefail`, functions in
