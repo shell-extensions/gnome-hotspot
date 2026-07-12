@@ -320,6 +320,30 @@ ensure_firewall_open() {
     log "FORWARD-Regel (Rückverkehr) bereits vorhanden (${wifi_if})"
   fi
 
+  # KDE Connect: Eingehende TCP-Verbindungen vom Hotspot zum Host erlauben
+  if ! run_privileged "${IPTABLES_BIN}" -C INPUT -i "${wifi_if}" -p tcp --dport 1714:1764 -j ACCEPT 2>/dev/null; then
+    if run_privileged "${IPTABLES_BIN}" -I INPUT -i "${wifi_if}" -p tcp --dport 1714:1764 -j ACCEPT; then
+      log "KDE-Connect TCP INPUT-Regel gesetzt (${wifi_if})"
+    else
+      log "WARNUNG: KDE-Connect TCP INPUT-Regel konnte nicht gesetzt werden"
+      status=1
+    fi
+  else
+    log "KDE-Connect TCP INPUT-Regel bereits vorhanden (${wifi_if})"
+  fi
+
+  # KDE Connect: UDP-Discovery-Broadcasts vom Hotspot zum Host erlauben
+  if ! run_privileged "${IPTABLES_BIN}" -C INPUT -i "${wifi_if}" -p udp --dport 1714:1764 -j ACCEPT 2>/dev/null; then
+    if run_privileged "${IPTABLES_BIN}" -I INPUT -i "${wifi_if}" -p udp --dport 1714:1764 -j ACCEPT; then
+      log "KDE-Connect UDP INPUT-Regel gesetzt (${wifi_if})"
+    else
+      log "WARNUNG: KDE-Connect UDP INPUT-Regel konnte nicht gesetzt werden"
+      status=1
+    fi
+  else
+    log "KDE-Connect UDP INPUT-Regel bereits vorhanden (${wifi_if})"
+  fi
+
   return $status
 }
 
@@ -367,6 +391,14 @@ clear_firewall_rules() {
 
   if run_privileged "${IPTABLES_BIN}" -D FORWARD -o "${wifi_if}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
     log "FORWARD-Rückregel für Hotspot entfernt (${wifi_if})"
+  fi
+
+  if run_privileged "${IPTABLES_BIN}" -D INPUT -i "${wifi_if}" -p tcp --dport 1714:1764 -j ACCEPT 2>/dev/null; then
+    log "KDE-Connect TCP INPUT-Regel entfernt (${wifi_if})"
+  fi
+
+  if run_privileged "${IPTABLES_BIN}" -D INPUT -i "${wifi_if}" -p udp --dport 1714:1764 -j ACCEPT 2>/dev/null; then
+    log "KDE-Connect UDP INPUT-Regel entfernt (${wifi_if})"
   fi
 }
 

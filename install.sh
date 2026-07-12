@@ -121,7 +121,13 @@ Cmnd_Alias HOTSPOT_IPTABLES = \
   ${ipt} -D FORWARD -o * -m conntrack --ctstate RELATED\,ESTABLISHED -j ACCEPT, \
   ${ipt} -t nat -C POSTROUTING -o * -j MASQUERADE, \
   ${ipt} -t nat -A POSTROUTING -o * -j MASQUERADE, \
-  ${ipt} -t nat -D POSTROUTING -o * -j MASQUERADE
+  ${ipt} -t nat -D POSTROUTING -o * -j MASQUERADE, \
+  ${ipt} -C INPUT -i * -p tcp --dport 1714\:1764 -j ACCEPT, \
+  ${ipt} -I INPUT -i * -p tcp --dport 1714\:1764 -j ACCEPT, \
+  ${ipt} -D INPUT -i * -p tcp --dport 1714\:1764 -j ACCEPT, \
+  ${ipt} -C INPUT -i * -p udp --dport 1714\:1764 -j ACCEPT, \
+  ${ipt} -I INPUT -i * -p udp --dport 1714\:1764 -j ACCEPT, \
+  ${ipt} -D INPUT -i * -p udp --dport 1714\:1764 -j ACCEPT
 Cmnd_Alias HOTSPOT_SYSCTL = ${sys} -w net.ipv4.ip_forward=*
 ${TARGET_USER} ALL=(root) NOPASSWD: HOTSPOT_IPTABLES, HOTSPOT_SYSCTL
 EOF
